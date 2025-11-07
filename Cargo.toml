@@ -1,0 +1,13 @@
+[package]
+name = "modutils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+atoi = "2.0.0"
+bhook = "0.1.2"
+bstr = "1.12.1"
+page_size = "0.6.0"
+plt-rs = "0.3.1"
+proc-maps = { version = "0.4.0", default-features = false }
+region = "3.0.2"
