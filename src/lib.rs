@@ -15,17 +15,17 @@ fn main() {
 pub struct Module<'e> {
     name: String,
     // This is basically gambling but whatever
-    bytes: &'static [u8],
+    // bytes: &'static [u8],
     option: DynamicLibrary<'e>,
 }
 
 impl<'e> Module<'e> {
     pub fn find(name: String) -> Self {
-        let sus = SimpleMapRange::find_library(&name).unwrap();
+        // let sus = SimpleMapRange::find_library(&name).unwrap();
         let dynlib = find_dynlib(&name);
         Self {
             name,
-            bytes: unsafe { core::slice::from_raw_parts(sus.start as *const u8, sus.size()) },
+            // bytes: unsafe { core::slice::from_raw_parts(sus.start as *const u8, sus.size()) },
             option: dynlib,
         }
     }
