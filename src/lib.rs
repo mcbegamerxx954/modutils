@@ -1,3 +1,4 @@
+use core::slice;
 use std::{
     cell::OnceCell,
     fs,
@@ -7,24 +8,57 @@ use std::{
 
 use atoi::FromRadix16;
 use bstr::ByteSlice;
+use findshlibs::{Segment, SharedLibrary, TargetSharedLibrary};
 use plt_rs::DynamicLibrary;
 use region::{Protection, protect_with_handle};
+use tinypatscan::Pattern;
 fn main() {
     println!("Hello, world!");
 }
 pub struct Module<'e> {
-    name: String,
+    code_segments: Vec<MemoryRange>,
     // This is basically gambling but whatever
     // bytes: &'static [u8],
     option: DynamicLibrary<'e>,
 }
-
+pub struct MemoryRange {
+    start: usize,
+    len: usize,
+}
+impl MemoryRange {
+    fn new(start: usize, len: usize) -> Self {
+        MemoryRange { start, len }
+    }
+}
+impl MemoryRange {
+    fn to_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.start as *const u8, self.len) }
+    }
+}
+fn has_subslice(slice: &[u8], subslice: &[u8]) -> bool {
+    slice
+        .windows(subslice.len())
+        .find(|s| *s == subslice)
+        .is_some()
+}
 impl<'e> Module<'e> {
-    pub fn find(name: String) -> Self {
+    pub fn find(name: &str) -> Self {
         // let sus = SimpleMapRange::find_library(&name).unwrap();
+        let mut code_segments = Vec::new();
+        TargetSharedLibrary::each(|lib| {
+            if has_subslice(lib.name().as_encoded_bytes(), name.as_bytes()) {
+                for code_segment in lib.segments().filter(|y| y.is_code() && y.is_load()) {
+                    let range = MemoryRange::new(
+                        code_segment.actual_virtual_memory_address(lib).0,
+                        code_segment.len(),
+                    );
+                    code_segments.push(range);
+                }
+            }
+        });
         let dynlib = find_dynlib(&name);
         Self {
-            name,
+            code_segments,
             // bytes: unsafe { core::slice::from_raw_parts(sus.start as *const u8, sus.size()) },
             option: dynlib,
         }
@@ -43,6 +77,14 @@ impl<'e> Module<'e> {
             let old_addr = plt_fn_ptr.replace(fun);
             Some(old_addr)
         }
+    }
+    pub fn find_signature<const LEN: usize>(&self, signature: Pattern<LEN>) -> Option<*const u8> {
+        for mrange in &self.code_segments {
+            if let Some(signature) = signature.simd_search(mrange.to_slice()) {
+                return Some(signature as *const u8);
+            }
+        }
+        None
     }
 }
 
@@ -106,6 +148,7 @@ unsafe fn write_mem(buf: &[u8], addr: *mut u8) -> Result<(), region::Error> {
     unsafe {
         let _handle = protect_with_handle(addr, buf.len(), Protection::READ_WRITE)?;
         ptr::copy_nonoverlapping(buf.as_ptr(), addr, buf.len());
+        clear_cache::clear_cache(addr.cast_const(), addr.add(buf.len()).cast_const());
         Ok(())
     }
 }
