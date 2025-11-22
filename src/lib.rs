@@ -78,7 +78,7 @@ impl<'e> Module<'e> {
             Some(old_addr)
         }
     }
-    pub fn find_signature<const LEN: usize>(&self, signature: Pattern<LEN>) -> Option<*const u8> {
+    pub fn find_signature<const LEN: usize>(&self, signature: &Pattern<LEN>) -> Option<*const u8> {
         for mrange in &self.code_segments {
             if let Some(signature) = signature.simd_search(mrange.to_slice()) {
                 return Some(signature as *const u8);
