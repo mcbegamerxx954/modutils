@@ -144,7 +144,7 @@ fn parse_range<'e>(buf: &'e [u8], name: &str) -> Option<(&'e [u8], &'e [u8])> {
     }
     None
 }
-unsafe fn write_mem(buf: &[u8], addr: *mut u8) -> Result<(), region::Error> {
+pub unsafe fn write_mem(buf: &[u8], addr: *mut u8) -> Result<(), region::Error> {
     unsafe {
         let _handle = protect_with_handle(addr, buf.len(), Protection::READ_WRITE)?;
         ptr::copy_nonoverlapping(buf.as_ptr(), addr, buf.len());
