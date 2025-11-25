@@ -9,6 +9,7 @@ bhook = "0.1.2"
 bstr = "1.12.1"
 clear-cache = "0.1.3"
 findshlibs = "0.10.2"
+os_str_bytes = "7.1.1"
 page_size = "0.6.0"
 plt-rs = "0.3.1"
 proc-maps = { version = "0.4.0", default-features = false }
