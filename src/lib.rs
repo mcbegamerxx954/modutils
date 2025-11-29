@@ -99,6 +99,14 @@ pub unsafe fn write_mem(buf: &[u8], addr: *mut u8) -> Result<(), region::Error> 
         Ok(())
     }
 }
+pub unsafe fn ptr_write<T>(ptr: *mut T, data: T) -> Result<(), region::Error> {
+    unsafe {
+        let _handle = protect_with_handle(ptr, size_of::<T>(), Protection::READ_WRITE)?;
+        ptr.write_unaligned(data);
+        clear_cache::clear_cache(ptr.cast_const(), ptr.add(size_of::<T>()).cast_const());
+    }
+    Ok(())
+}
 // Ill clean the lifetimes up later
 pub struct SigFindIterator<'a, 'f, 'e, const SIZE: usize> {
     module: &'f Module<'e>,
