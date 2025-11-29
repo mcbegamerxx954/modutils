@@ -74,10 +74,14 @@ impl<'e> Module<'e> {
         }
         for mrange in &self.code_segments {
             if let Some(signature) = signature.search(mrange.to_slice(), Algorithm::Simd) {
-                return Some(signature as *const u8);
+                return Some((mrange.start + signature) as *const u8);
             }
         }
         None
+    }
+
+    fn to_real_address(&self, addr: usize, section: usize) -> *const u8 {
+        (self.code_segments[section].start + addr) as *const u8
     }
     pub fn iter_find_signature<const LEN: usize>() {}
 }
@@ -113,10 +117,10 @@ impl<'a, 'f, 'e: 'a, const SIZE: usize> SigFindIterator<'a, 'f, 'e, SIZE> {
     }
 }
 impl<'f: 'a, 'a, 'e: 'a, const SIZE: usize> Iterator for SigFindIterator<'a, 'f, 'e, SIZE> {
-    type Item = usize;
+    type Item = *const u8;
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(sig) = self.last_finder.next() {
-            return Some(sig);
+            return Some(self.module.to_real_address(sig, self.module_section));
         }
         while self.module_section <= self.module.code_segments.len() - 1 {
             let mut next_module = self.signature.search_iter(
@@ -128,7 +132,7 @@ impl<'f: 'a, 'a, 'e: 'a, const SIZE: usize> Iterator for SigFindIterator<'a, 'f,
                 // SAFETY: There is basically no fucking way we would be ok anyways in a module gets unloaded at runtime.
                 // no borrow checker can fix that, lets ignore the lifetime this time as we have no other way around this
                 self.last_finder = next_module;
-                return Some(find);
+                return Some(self.module.to_real_address(find, self.module_section));
             }
         }
         None
