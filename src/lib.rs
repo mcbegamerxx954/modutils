@@ -95,27 +95,24 @@ pub unsafe fn write_mem(buf: &[u8], addr: *mut u8) -> Result<(), region::Error> 
         Ok(())
     }
 }
-struct SigFindIterator<'e, const SIZE: usize> {
-    module: &'e Module<'e>,
+// Ill clean the lifetimes up later
+pub struct SigFindIterator<'a, 'f, 'e, const SIZE: usize> {
+    module: &'f Module<'e>,
     signature: StaticPattern<SIZE>,
-    last_finder: FinderIterator<'e, SIZE>,
+    last_finder: FinderIterator<'a, SIZE>,
     module_section: usize,
 }
-impl<'e, const SIZE: usize> SigFindIterator<'e, SIZE> {
-    fn new(module: &'e Module, signature: StaticPattern<SIZE>) -> Self {
+impl<'a, 'f, 'e: 'a, const SIZE: usize> SigFindIterator<'a, 'f, 'e, SIZE> {
+    pub fn new(module: &'e Module, signature: StaticPattern<SIZE>) -> Self {
         Self {
             module,
             signature,
-            last_finder: unsafe {
-                transmute::<FinderIterator<'_, SIZE>, FinderIterator<'e, SIZE>>(
-                    signature.search_iter(module.code_segments[0].to_slice(), Algorithm::Simd),
-                )
-            },
+            last_finder: signature.search_iter(module.code_segments[0].to_slice(), Algorithm::Simd),
             module_section: 0,
         }
     }
 }
-impl<'e, const SIZE: usize> Iterator for SigFindIterator<'e, SIZE> {
+impl<'f: 'a, 'a, 'e: 'a, const SIZE: usize> Iterator for SigFindIterator<'a, 'f, 'e, SIZE> {
     type Item = usize;
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(sig) = self.last_finder.next() {
@@ -130,10 +127,7 @@ impl<'e, const SIZE: usize> Iterator for SigFindIterator<'e, SIZE> {
             if let Some(find) = next_module.next() {
                 // SAFETY: There is basically no fucking way we would be ok anyways in a module gets unloaded at runtime.
                 // no borrow checker can fix that, lets ignore the lifetime this time as we have no other way around this
-                unsafe {
-                    self.last_finder =
-                        transmute::<FinderIterator<'_, SIZE>, FinderIterator<'e, SIZE>>(next_module)
-                };
+                self.last_finder = next_module;
                 return Some(find);
             }
         }
