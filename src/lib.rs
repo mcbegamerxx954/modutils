@@ -1,21 +1,17 @@
 use core::slice;
 use std::{
-    fs,
+    mem::transmute,
     ptr::{self},
 };
 
-use atoi::FromRadix16;
-use bstr::ByteSlice;
 use findshlibs::{Segment, SharedLibrary, TargetSharedLibrary};
 use os_str_bytes::OsStrBytesExt;
 use plt_rs::DynamicLibrary;
 use region::{Protection, protect_with_handle};
-use tinypatscan::Pattern;
+use tinypatscan::{Algorithm, FinderIterator, StaticPattern};
 
 pub struct Module<'e> {
     code_segments: Vec<MemoryRange>,
-    // This is basically gambling but whatever
-    // bytes: &'static [u8],
     option: DynamicLibrary<'e>,
 }
 pub struct MemoryRange {
@@ -35,7 +31,6 @@ impl MemoryRange {
 
 impl<'e> Module<'e> {
     pub fn find(name: &str) -> Self {
-        // let sus = SimpleMapRange::find_library(&name).unwrap();
         let mut code_segments = Vec::new();
         TargetSharedLibrary::each(|lib| {
             if lib.name().contains(name) {
@@ -52,7 +47,6 @@ impl<'e> Module<'e> {
         let dynlib = find_dynlib(&name);
         Self {
             code_segments,
-            // bytes: unsafe { core::slice::from_raw_parts(sus.start as *const u8, sus.size()) },
             option: dynlib,
         }
     }
@@ -71,80 +65,78 @@ impl<'e> Module<'e> {
             Some(old_addr)
         }
     }
-    pub fn find_signature<const LEN: usize>(&self, signature: &Pattern<LEN>) -> Option<*const u8> {
+    pub fn find_signature<const LEN: usize>(
+        &self,
+        signature: &StaticPattern<LEN>,
+    ) -> Option<*const u8> {
         if self.code_segments.is_empty() {
             panic!("huh no code segments??");
         }
         for mrange in &self.code_segments {
-            if let Some(signature) = signature.simd_search(mrange.to_slice()) {
+            if let Some(signature) = signature.search(mrange.to_slice(), Algorithm::Simd) {
                 return Some(signature as *const u8);
             }
         }
         None
     }
+    pub fn iter_find_signature<const LEN: usize>() {}
 }
 
 fn find_dynlib<'e>(name: &str) -> DynamicLibrary<'e> {
     let libs = plt_rs::collect_modules();
     let lib = libs.into_iter().find(|n| n.name().contains(name)).unwrap();
     DynamicLibrary::initialize(lib).unwrap()
-} // A very minimal map range
-// #[derive(Debug)]
-// struct SimpleMapRange {
-//     start: usize,
-//     size: usize,
-// }
-
-// impl SimpleMapRange {
-//     /// Get the address where this range starts
-//     const fn start(&self) -> usize {
-//         self.start
-//     }
-
-//     /// Get the address where this range ends
-//     const fn size(&self) -> usize {
-//         self.size
-//     }
-// }
-// impl SimpleMapRange {
-//     fn find_library(lib: &str) -> Result<SimpleMapRange, Box<dyn std::error::Error>> {
-//         let contents = fs::read("/proc/self/maps")?;
-//         for line in contents.lines() {
-//             if line.trim_ascii().is_empty() {
-//                 continue;
-//             }
-//             // Not too pretty but this method prevents crashes
-//             let Some((addr_start, addr_end)) = parse_range(line, lib) else {
-//                 continue;
-//             };
-//             let start = usize::from_radix_16(addr_start).0;
-//             let end = usize::from_radix_16(addr_end).0;
-//             //            log::info!("Found libminecraftpe.so at: {:x}-{:x}", start, end);
-//             return Ok(SimpleMapRange {
-//                 start,
-//                 size: end - start,
-//             });
-//         }
-
-//         Err("libminecraftpe.so not found in memory maps".into())
-//     }
-// }
-// /// Separated into function due to option spam
-// fn parse_range<'e>(buf: &'e [u8], name: &str) -> Option<(&'e [u8], &'e [u8])> {
-//     let mut line = buf.split(|v| v.is_ascii_whitespace());
-//     let addr_range = line.next()?;
-//     let perms = line.next()?;
-//     let pathname = line.next_back()?;
-//     if perms.contains(&b'x') && pathname.ends_with_str(name) {
-//         return addr_range.split_once_str(b"-");
-//     }
-//     None
-// }
+}
 pub unsafe fn write_mem(buf: &[u8], addr: *mut u8) -> Result<(), region::Error> {
     unsafe {
         let _handle = protect_with_handle(addr, buf.len(), Protection::READ_WRITE)?;
         ptr::copy_nonoverlapping(buf.as_ptr(), addr, buf.len());
         clear_cache::clear_cache(addr.cast_const(), addr.add(buf.len()).cast_const());
         Ok(())
+    }
+}
+struct SigFindIterator<'e, const SIZE: usize> {
+    module: &'e Module<'e>,
+    signature: StaticPattern<SIZE>,
+    last_finder: FinderIterator<'e, SIZE>,
+    module_section: usize,
+}
+impl<'e, const SIZE: usize> SigFindIterator<'e, SIZE> {
+    fn new(module: &'e Module, signature: StaticPattern<SIZE>) -> Self {
+        Self {
+            module,
+            signature,
+            last_finder: unsafe {
+                transmute::<FinderIterator<'_, SIZE>, FinderIterator<'e, SIZE>>(
+                    signature.search_iter(module.code_segments[0].to_slice(), Algorithm::Simd),
+                )
+            },
+            module_section: 0,
+        }
+    }
+}
+impl<'e, const SIZE: usize> Iterator for SigFindIterator<'e, SIZE> {
+    type Item = usize;
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(sig) = self.last_finder.next() {
+            return Some(sig);
+        }
+        while self.module_section <= self.module.code_segments.len() - 1 {
+            let mut next_module = self.signature.search_iter(
+                self.module.code_segments[self.module_section].to_slice(),
+                Algorithm::Simd,
+            );
+            self.module_section += 1;
+            if let Some(find) = next_module.next() {
+                // SAFETY: There is basically no fucking way we would be ok anyways in a module gets unloaded at runtime.
+                // no borrow checker can fix that, lets ignore the lifetime this time as we have no other way around this
+                unsafe {
+                    self.last_finder =
+                        transmute::<FinderIterator<'_, SIZE>, FinderIterator<'e, SIZE>>(next_module)
+                };
+                return Some(find);
+            }
+        }
+        None
     }
 }
