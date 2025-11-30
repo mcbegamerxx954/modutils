@@ -36,14 +36,14 @@ impl<'e> Module<'e> {
             if lib.name().contains(name) {
                 for code_segment in lib.segments().filter(|y| y.is_code() && y.is_load()) {
                     let range = MemoryRange::new(
-                        code_segment.actual_virtual_memory_address(lib).0,
+                        code_segment.actual_virtual_memory_address(lib).into(),
                         code_segment.len(),
                     );
                     code_segments.push(range);
                 }
             }
         });
-
+        log::info!("We have {} code segments", code_segments.len());
         let dynlib = find_dynlib(&name);
         Self {
             code_segments,
@@ -73,8 +73,9 @@ impl<'e> Module<'e> {
             panic!("huh no code segments??");
         }
         for mrange in &self.code_segments {
-            if let Some(signature) = signature.search(mrange.to_slice(), Algorithm::Simd) {
-                return Some((mrange.start + signature) as *const u8);
+            let slice = mrange.to_slice();
+            if let Some(signature) = signature.search(slice, Algorithm::Simd) {
+                return Some(slice[signature..].as_ptr());
             }
         }
         None
